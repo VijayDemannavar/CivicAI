@@ -57,13 +57,12 @@
       <a href="{{ url_for('submit.complaint_form') }}" class="btn btn-primary">
         📝 Report Another Issue
       </a>
-      <a href="{{ url_for('admin.complaint_detail', complaint_id=complaint_id) }}"
-         class="btn btn-secondary">
-        🔍 View Full Details
-      </a>
-      <a href="{{ url_for('admin.dashboard') }}" class="btn btn-secondary">
-        📊 Admin Dashboard
-      </a>
+    </div>
+
+    <div class="alert alert-info" style="margin-top:1.25rem;text-align:left;font-size:.87rem;">
+      <strong>📋 Track your complaint:</strong>
+      Save your Complaint ID <strong>{{ complaint_id }}</strong> to follow up with the
+      relevant department. You can quote this ID when contacting city authorities.
     </div>
 
   </div>

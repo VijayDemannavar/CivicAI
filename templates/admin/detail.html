@@ -1,6 +1,23 @@
 {% extends "base.html" %}
 {% block title %}{{ complaint.complaint_id }} – Complaint Detail{% endblock %}
 
+{% block extra_head %}
+  {% if complaint.latitude and complaint.longitude %}
+  <link rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin="anonymous">
+  <style>
+    #detail-map {
+      width: 100%;
+      height: 200px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+    }
+  </style>
+  {% endif %}
+{% endblock %}
+
 {% block content %}
 <div class="container">
 
@@ -116,15 +133,15 @@
         </div>
       </div>
 
-      <!-- Location map placeholder (Phase 5: Leaflet) -->
+      <!-- Location mini-map (Phase 4C: Leaflet) -->
       {% if complaint.latitude and complaint.longitude %}
       <div class="card" style="margin-bottom:1.25rem;">
         <h2 class="card-title">📍 Location</h2>
-        <div class="map-placeholder">
-          <span class="map-icon">🗺</span>
-          <span>{{ complaint.latitude }}, {{ complaint.longitude }}</span>
-          <span style="font-size:.75rem;">Interactive map in Phase 5</span>
-        </div>
+        <p style="font-size:.8rem;color:var(--text-muted);margin-bottom:.6rem;">
+          {{ complaint.latitude }}, {{ complaint.longitude }}
+          {% if complaint.address %} &mdash; {{ complaint.address | e }}{% endif %}
+        </p>
+        <div id="detail-map" aria-label="Complaint location map"></div>
       </div>
       {% endif %}
 
@@ -388,4 +405,34 @@
   </div>
 
 </div>
+{% endblock %}
+
+{% block extra_scripts %}
+  {% if complaint.latitude and complaint.longitude %}
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV/XN2GqaY="
+          crossorigin="anonymous"></script>
+  <script>
+    (function () {
+      var lat = {{ complaint.latitude | tojson }};
+      var lon = {{ complaint.longitude | tojson }};
+      var title = {{ complaint.complaint_id | tojson }};
+
+      var map = L.map("detail-map", { zoomControl: true }).setView([lat, lon], 16);
+
+      L.tileLayer(
+        "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        {
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+          maxZoom: 19
+        }
+      ).addTo(map);
+
+      L.marker([lat, lon])
+        .addTo(map)
+        .bindPopup("<strong>" + title + "</strong>")
+        .openPopup();
+    })();
+  </script>
+  {% endif %}
 {% endblock %}

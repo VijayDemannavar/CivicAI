@@ -243,13 +243,16 @@ def _run_ai_pipeline(
             category=category,
         )
 
-        # Persist categorisation results
+        # Persist categorisation + priority results
         db.save_ai_results(
             complaint_id    = complaint_id,
             ai_category     = ai["ai_category"],
             ai_confidence   = ai["ai_confidence"],
             ai_explanation  = ai["ai_explanation"],
             ai_needs_review = ai["ai_needs_review"],
+            priority_score  = ai.get("priority_score"),
+            priority_level  = ai.get("priority_level"),
+            priority_reason = ai.get("priority_reason"),
         )
 
         # Persist duplicate links

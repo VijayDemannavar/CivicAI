@@ -29,10 +29,11 @@ class AIEngine:
     def __init__(self) -> None:
         self._classifier = None
         self._detector   = None
+        self._priority   = None
         self._load_models()
 
     def _load_models(self) -> None:
-        """Load classifier and detector, catching failures gracefully."""
+        """Load classifier, detector, and priority engine — failures are isolated."""
         try:
             from ai.category_classifier import get_classifier
             self._classifier = get_classifier()
@@ -45,10 +46,17 @@ class AIEngine:
         except Exception as exc:
             logger.error("Failed to load DuplicateDetector: %s", exc)
 
+        try:
+            from ai.priority_engine import get_priority_engine
+            self._priority = get_priority_engine()
+        except Exception as exc:
+            logger.error("Failed to load PriorityEngine: %s", exc)
+
         logger.info(
-            "AIEngine ready (classifier=%s, detector=%s).",
+            "AIEngine ready (classifier=%s, detector=%s, priority=%s).",
             "ok" if self._classifier else "FAILED",
             "ok" if self._detector   else "FAILED",
+            "ok" if self._priority   else "FAILED",
         )
 
     # ── Public API ─────────────────────────────────────────────────────────────
@@ -74,14 +82,21 @@ class AIEngine:
 
         Returns dict with keys:
             ai_category, ai_confidence, ai_explanation, ai_needs_review,
-            duplicate_matches (list of DuplicateMatch)
+            duplicate_matches (list of DuplicateMatch),
+            priority_score, priority_level, priority_reason
         """
         result: dict = {
+            # Categorisation defaults
             "ai_category":      category,     # safe default = citizen choice
             "ai_confidence":    0.0,
             "ai_explanation":   "",
             "ai_needs_review":  False,
+            # Duplicate detection defaults
             "duplicate_matches": [],
+            # Priority defaults
+            "priority_score":   0,
+            "priority_level":   "Low",
+            "priority_reason":  "",
         }
 
         # ── Step 1: Categorisation ────────────────────────────────────
@@ -119,6 +134,27 @@ class AIEngine:
                     )
             except Exception as exc:
                 logger.error("Duplicate detection failed for %s: %s", complaint_id, exc)
+
+        # ── Step 3: Priority scoring ──────────────────────────────────
+        if self._priority is not None:
+            try:
+                dup_count = len(result["duplicate_matches"])
+                pri = self._priority.score(
+                    category        = result["ai_category"],
+                    title           = title,
+                    description     = description,
+                    duplicate_count = dup_count,
+                )
+                result["priority_score"]  = pri.priority_score
+                result["priority_level"]  = pri.priority_level
+                result["priority_reason"] = pri.priority_reason
+                logger.info(
+                    "Priority for %s: %s (%d) — %s",
+                    complaint_id, pri.priority_level,
+                    pri.priority_score, pri.priority_reason[:80],
+                )
+            except Exception as exc:
+                logger.error("Priority scoring failed for %s: %s", complaint_id, exc)
 
         return result
 

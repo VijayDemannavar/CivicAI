@@ -294,23 +294,46 @@ def save_ai_results(
     ai_confidence: float,
     ai_explanation: str,
     ai_needs_review: bool,
+    priority_score: int | None = None,
+    priority_level: str | None = None,
+    priority_reason: str | None = None,
 ) -> None:
     """
-    Write AI categorisation results back to the complaints row.
+    Write AI categorisation and priority results back to the complaints row.
     Never overwrites the citizen-selected 'category' column.
+
+    Priority fields are optional; if omitted the existing DB values are kept.
     """
     with db_cursor() as (conn, cur):
-        cur.execute(
-            """UPDATE complaints
-               SET ai_category      = ?,
-                   ai_confidence    = ?,
-                   ai_explanation   = ?,
-                   ai_needs_review  = ?,
-                   updated_at       = datetime('now')
-               WHERE complaint_id   = ?;""",
-            (ai_category, ai_confidence, ai_explanation,
-             1 if ai_needs_review else 0, complaint_id),
-        )
+        if priority_score is not None:
+            cur.execute(
+                """UPDATE complaints
+                   SET ai_category      = ?,
+                       ai_confidence    = ?,
+                       ai_explanation   = ?,
+                       ai_needs_review  = ?,
+                       priority_score   = ?,
+                       priority_level   = ?,
+                       priority_reason  = ?,
+                       updated_at       = datetime('now')
+                   WHERE complaint_id   = ?;""",
+                (ai_category, ai_confidence, ai_explanation,
+                 1 if ai_needs_review else 0,
+                 priority_score, priority_level, priority_reason,
+                 complaint_id),
+            )
+        else:
+            cur.execute(
+                """UPDATE complaints
+                   SET ai_category      = ?,
+                       ai_confidence    = ?,
+                       ai_explanation   = ?,
+                       ai_needs_review  = ?,
+                       updated_at       = datetime('now')
+                   WHERE complaint_id   = ?;""",
+                (ai_category, ai_confidence, ai_explanation,
+                 1 if ai_needs_review else 0, complaint_id),
+            )
 
 
 def save_duplicate_link(

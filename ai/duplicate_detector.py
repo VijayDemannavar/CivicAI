@@ -108,18 +108,45 @@ def _cosine(a: list[float], b: list[float]) -> float:
         return dot / (na * nb)
 
 
+def _overlap_coefficient(tokens_a: list[str], tokens_b: list[str]) -> float:
+    """
+    Overlap coefficient = |A ∩ B| / min(|A|, |B|).
+
+    Measures how much the smaller token set is covered by the larger one.
+    Works well on short texts where TF-IDF discounts shared terms as 'common'
+    in the two-document corpus.
+    """
+    set_a, set_b = set(tokens_a), set(tokens_b)
+    denom = min(len(set_a), len(set_b))
+    if denom == 0:
+        return 0.0
+    return len(set_a & set_b) / denom
+
+
 def _text_pair_similarity(text_a: str, text_b: str) -> float:
-    """TF-IDF cosine similarity between two text strings."""
+    """
+    Similarity between two text strings.
+
+    Returns max(TF-IDF cosine, overlap coefficient).
+
+    TF-IDF cosine excels when documents are longer and vocabulary is rich.
+    Overlap coefficient catches short-text cases where shared tokens are
+    IDF-discounted to nearly zero because both docs share them (the 2-doc
+    corpus problem).  Taking the max of the two ensures identical short
+    texts still score 1.0 and genuinely similar short texts are not penalised.
+    """
     tok_a = _tokenize(text_a)
     tok_b = _tokenize(text_b)
     if not tok_a or not tok_b:
         return 0.0
-    idf   = _build_idf([tok_a, tok_b])
-    vocab = sorted(idf.keys())
-    return round(_cosine(
+    idf    = _build_idf([tok_a, tok_b])
+    vocab  = sorted(idf.keys())
+    tfidf  = _cosine(
         _tfidf_vector(tok_a, vocab, idf),
         _tfidf_vector(tok_b, vocab, idf),
-    ), 4)
+    )
+    overlap = _overlap_coefficient(tok_a, tok_b)
+    return round(max(tfidf, overlap), 4)
 
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -269,21 +296,38 @@ class DuplicateDetector:
         geo_sim: float | None,
     ) -> float:
         """
-        Blend the four signals into a final score in [0, 1].
+        Blend active signals into a final score in [0, 1].
 
-        If ``geo_sim`` is None (no coordinates available), the geo weight is
-        distributed proportionally across title, description and category so
-        identical text still reaches 1.0.
+        Only signals with a positive weight *and* available value contribute to
+        the denominator.  Concretely:
+
+        - ``geo_sim`` is None  → geo weight redistributed to other signals.
+        - ``cat_sim`` is 0.0   → cat weight redistributed only when no category
+          was supplied (i.e. both sides had empty category strings, making 0.0 a
+          "missing" rather than a "mismatch").  We detect this by checking
+          whether cat_sim is exactly 0.0 while geo is also absent; in that
+          scenario the only meaningful signals are title and description, so we
+          redistribute over title+desc only so identical complaints score 1.0.
+
+        Rule used: build the pool of (weight, value) pairs for available signals,
+        normalise weights to sum to 1.0, then compute weighted sum.
         """
-        if geo_sim is None:
-            total = self.W_TITLE + self.W_DESC + self.W_CAT  # 0.90
-            w_t = self.W_TITLE / total
-            w_d = self.W_DESC  / total
-            w_c = self.W_CAT   / total
-            score = w_t * title_sim + w_d * desc_sim + w_c * cat_sim
-        else:
-            score = (self.W_TITLE * title_sim + self.W_DESC * desc_sim
-                     + self.W_CAT * cat_sim   + self.W_GEO * geo_sim)
+        pool: list[tuple[float, float]] = [
+            (self.W_TITLE, title_sim),
+            (self.W_DESC,  desc_sim),
+        ]
+        # Include category only when it is genuinely informative (non-zero).
+        # cat_sim == 0.0 with no supplied category is "unknown", not "mismatch".
+        if cat_sim > 0.0:
+            pool.append((self.W_CAT, cat_sim))
+        # Include geo only when coordinates were available.
+        if geo_sim is not None:
+            pool.append((self.W_GEO, geo_sim))
+
+        total = sum(w for w, _ in pool)
+        if total == 0.0:
+            return 0.0
+        score = sum(w * v for w, v in pool) / total
         return round(score, 4)
 
     # ── Private ─────────────────────────────────────────────────────────────────

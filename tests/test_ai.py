@@ -629,5 +629,256 @@ class TestAIIntegration(unittest.TestCase):
         self.assertIn(b"AI prediction",    detail.data)
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 5. PRIORITY ENGINE TESTS
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestPriorityEngine(unittest.TestCase):
+    """
+    Tests for ai/priority_engine.py (Phase 3C).
+    All tests are pure-Python, no DB, no network.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from ai.priority_engine import PriorityEngine
+        cls.pe = PriorityEngine()
+
+    # ── Return type and structure ──────────────────────────────────────────────
+
+    def test_returns_priority_result_namedtuple(self):
+        """score() must return a PriorityResult NamedTuple."""
+        from ai.priority_engine import PriorityResult
+        result = self.pe.score("Road Damage", "Pothole on road", "There is a pothole.")
+        self.assertIsInstance(result, PriorityResult)
+
+    def test_result_has_all_fields(self):
+        """PriorityResult must expose priority_score, priority_level, priority_reason."""
+        r = self.pe.score("Road Damage", "Pothole on road", "There is a pothole.")
+        self.assertTrue(hasattr(r, "priority_score"))
+        self.assertTrue(hasattr(r, "priority_level"))
+        self.assertTrue(hasattr(r, "priority_reason"))
+
+    def test_score_is_integer(self):
+        """priority_score must be an int."""
+        r = self.pe.score("Road Damage", "Pothole on road", "There is a pothole.")
+        self.assertIsInstance(r.priority_score, int)
+
+    def test_score_in_range_0_to_100(self):
+        """priority_score must be in [0, 100]."""
+        r = self.pe.score("Road Damage", "Pothole on road", "There is a pothole.")
+        self.assertGreaterEqual(r.priority_score, 0)
+        self.assertLessEqual(r.priority_score, 100)
+
+    def test_level_is_valid_string(self):
+        """priority_level must be one of Low/Medium/High/Critical."""
+        r = self.pe.score("Road Damage", "Pothole on road", "There is a pothole.")
+        self.assertIn(r.priority_level, ["Low", "Medium", "High", "Critical"])
+
+    def test_reason_is_nonempty_string(self):
+        """priority_reason must be a non-empty string."""
+        r = self.pe.score("Road Damage", "Pothole on road", "There is a pothole.")
+        self.assertIsInstance(r.priority_reason, str)
+        self.assertGreater(len(r.priority_reason), 0)
+
+    # ── Level thresholds ───────────────────────────────────────────────────────
+
+    def test_score_to_level_critical(self):
+        self.assertEqual(self.pe.score_to_level(75), "Critical")
+        self.assertEqual(self.pe.score_to_level(100), "Critical")
+
+    def test_score_to_level_high(self):
+        self.assertEqual(self.pe.score_to_level(50), "High")
+        self.assertEqual(self.pe.score_to_level(74), "High")
+
+    def test_score_to_level_medium(self):
+        self.assertEqual(self.pe.score_to_level(25), "Medium")
+        self.assertEqual(self.pe.score_to_level(49), "Medium")
+
+    def test_score_to_level_low(self):
+        self.assertEqual(self.pe.score_to_level(0), "Low")
+        self.assertEqual(self.pe.score_to_level(24), "Low")
+
+    # ── Category base scores ──────────────────────────────────────────────────
+
+    def test_public_safety_base_is_highest(self):
+        """Public Safety must score higher than Road Damage with same neutral description."""
+        r_safety = self.pe.score("Public Safety", "Issue near bus stop",
+                                 "There is a safety issue near the bus stop.")
+        r_road   = self.pe.score("Road Damage",   "Issue near bus stop",
+                                 "There is a safety issue near the bus stop.")
+        self.assertGreater(r_safety.priority_score, r_road.priority_score)
+
+    def test_noise_pollution_base_is_low(self):
+        """Noise Pollution with neutral text should score Low."""
+        r = self.pe.score("Noise Pollution", "Loud music in park",
+                          "Music is playing loudly in the park.")
+        self.assertEqual(r.priority_level, "Low")
+
+    # ── Urgency keyword detection ─────────────────────────────────────────────
+
+    def test_urgency_keyword_raises_score(self):
+        """A complaint mentioning 'accident' should score higher than one without."""
+        r_urgent = self.pe.score("Road Damage", "Accident on pothole road",
+                                 "A serious accident happened due to the pothole.")
+        r_normal = self.pe.score("Road Damage", "Pothole on road",
+                                 "There is a pothole on the road.")
+        self.assertGreater(r_urgent.priority_score, r_normal.priority_score)
+
+    def test_public_safety_with_assault_is_critical(self):
+        """Public Safety + assault keyword must reach Critical."""
+        r = self.pe.score(
+            "Public Safety",
+            "Woman assaulted near bus stop",
+            "A woman was assaulted near the bus stop on Main Road. Dangerous area.",
+        )
+        self.assertEqual(r.priority_level, "Critical")
+
+    def test_road_damage_with_collapse_and_injuries_is_critical(self):
+        """Road Damage + collapse + injured must reach Critical."""
+        r = self.pe.score(
+            "Road Damage",
+            "Bridge collapsed injuring multiple people",
+            "The bridge collapsed. Several people were injured. Emergency services called.",
+            duplicate_count=2,
+        )
+        self.assertEqual(r.priority_level, "Critical")
+
+    # ── Infrastructure risk detection ─────────────────────────────────────────
+
+    def test_infra_keyword_raises_score(self):
+        """A complaint mentioning 'no water supply' should score higher than one without."""
+        r_infra  = self.pe.score("Water Supply", "No water supply since yesterday",
+                                 "There is no water supply in our entire colony.")
+        r_normal = self.pe.score("Water Supply", "Water pressure low",
+                                 "Water pressure has been low since morning.")
+        self.assertGreater(r_infra.priority_score, r_normal.priority_score)
+
+    def test_open_manhole_raises_score(self):
+        """Mention of open manhole (infrastructure risk) should raise the score."""
+        r_with    = self.pe.score("Drainage", "Open manhole on road",
+                                  "There is an uncovered manhole on the main road.")
+        r_without = self.pe.score("Drainage", "Drain issue on road",
+                                  "There is a drain issue on the main road.")
+        self.assertGreater(r_with.priority_score, r_without.priority_score)
+
+    # ── Scope keyword detection ───────────────────────────────────────────────
+
+    def test_scope_keyword_raises_score(self):
+        """A complaint affecting 'entire area' should score higher than a single-point one."""
+        r_wide   = self.pe.score("Waterlogging", "Waterlogging on MG Road",
+                                 "The entire area is flooded. All residents affected.")
+        r_narrow = self.pe.score("Waterlogging", "Waterlogging on MG Road",
+                                 "There is some water near the bus stop.")
+        self.assertGreater(r_wide.priority_score, r_narrow.priority_score)
+
+    # ── Duration keyword detection ────────────────────────────────────────────
+
+    def test_duration_keyword_raises_score(self):
+        """A complaint that has persisted 'for months' should score higher."""
+        r_long   = self.pe.score("Streetlight", "Broken streetlight",
+                                 "This streetlight has been broken for months.")
+        r_recent = self.pe.score("Streetlight", "Broken streetlight",
+                                 "This streetlight broke this morning.")
+        self.assertGreater(r_long.priority_score, r_recent.priority_score)
+
+    # ── Duplicate count bonus ─────────────────────────────────────────────────
+
+    def test_duplicate_count_bonus_raises_score(self):
+        """A complaint with 2 confirmed duplicates must score higher than with 0."""
+        r_with    = self.pe.score("Garbage Overflow", "Garbage overflow",
+                                  "Garbage bins are overflowing.", duplicate_count=2)
+        r_without = self.pe.score("Garbage Overflow", "Garbage overflow",
+                                  "Garbage bins are overflowing.", duplicate_count=0)
+        self.assertGreater(r_with.priority_score, r_without.priority_score)
+
+    def test_duplicate_count_bonus_is_capped(self):
+        """Duplicate bonus must not exceed MAX_DUPLICATE_BONUS (15 pts)."""
+        r_many = self.pe.score("Road Damage", "Pothole issue", "Big pothole.",
+                               duplicate_count=100)
+        r_few  = self.pe.score("Road Damage", "Pothole issue", "Big pothole.",
+                               duplicate_count=3)
+        # Both should have same score because cap of 15 is hit at 3 duplicates
+        self.assertEqual(r_many.priority_score, r_few.priority_score)
+
+    # ── Score clamping ────────────────────────────────────────────────────────
+
+    def test_max_score_does_not_exceed_100(self):
+        """Even with every signal firing the score must be ≤ 100."""
+        r = self.pe.score(
+            "Public Safety",
+            "Emergency: attacked, injured, fire, collapsed, flooding, electrocution",
+            "Entire area affected. No water supply. Power outage. Gas leak. "
+            "Road blocked. Hundreds of people injured. This has been going on for months.",
+            duplicate_count=100,
+        )
+        self.assertLessEqual(r.priority_score, 100)
+
+    def test_min_score_is_not_negative(self):
+        """Score must never be negative."""
+        r = self.pe.score("Other", "X", "Y")
+        self.assertGreaterEqual(r.priority_score, 0)
+
+    # ── Reason content ────────────────────────────────────────────────────────
+
+    def test_reason_mentions_category(self):
+        """priority_reason should mention the category used."""
+        r = self.pe.score("Road Damage", "Pothole on road", "Big pothole.")
+        self.assertIn("Road Damage", r.priority_reason)
+
+    def test_reason_mentions_urgency_when_triggered(self):
+        """If an urgency signal fires, priority_reason must mention it."""
+        r = self.pe.score("Road Damage", "Pothole caused a fatal accident",
+                          "A fatal accident happened due to the pothole.")
+        self.assertIn("urgency", r.priority_reason.lower())
+
+    # ── AI Engine integration ─────────────────────────────────────────────────
+
+    def test_ai_engine_process_includes_priority_keys(self):
+        """process_complaint() must return priority_score, priority_level, priority_reason."""
+        from ai.ai_engine import AIEngine
+        engine = AIEngine()
+        result = engine.process_complaint(
+            complaint_id="PRI-TEST-001",
+            title="Severe pothole on MG Road causing accidents",
+            description="Deep dangerous pothole. Multiple vehicles damaged.",
+            category="Road Damage",
+            existing_complaints=[],
+        )
+        self.assertIn("priority_score",  result)
+        self.assertIn("priority_level",  result)
+        self.assertIn("priority_reason", result)
+
+    def test_ai_engine_priority_score_in_range(self):
+        """priority_score returned by AIEngine must be in [0, 100]."""
+        from ai.ai_engine import AIEngine
+        engine = AIEngine()
+        result = engine.process_complaint(
+            complaint_id="PRI-TEST-002",
+            title="Garbage overflow at market",
+            description="Garbage bin overflowing since Monday.",
+            category="Garbage Overflow",
+            existing_complaints=[],
+        )
+        self.assertGreaterEqual(result["priority_score"], 0)
+        self.assertLessEqual(result["priority_score"], 100)
+
+    def test_ai_engine_priority_failure_gives_safe_defaults(self):
+        """If PriorityEngine raises, process_complaint must still succeed."""
+        from ai.ai_engine import AIEngine
+        engine = AIEngine()
+        with patch.object(engine._priority, "score", side_effect=RuntimeError("crash")):
+            result = engine.process_complaint(
+                complaint_id="PRI-TEST-003",
+                title="Test complaint",
+                description="Test description.",
+                category="Other",
+                existing_complaints=[],
+            )
+        # Should still return safe defaults (no exception propagated)
+        self.assertIn("priority_score",  result)
+        self.assertEqual(result["priority_level"], "Low")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

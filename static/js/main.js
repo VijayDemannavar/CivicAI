@@ -201,6 +201,47 @@ function initDashboardFilters() {
   applyFilters();   // run once on load
 }
 
+/* ── GPS geolocation capture ──────────────────────────────────────── */
+function initGeolocate() {
+  const btn    = $("#use-location");
+  const status = $("#geo-status");
+  const latEl  = $("#latitude");
+  const lonEl  = $("#longitude");
+
+  // Hide button entirely if Geolocation API is unavailable (e.g. insecure context)
+  if (!btn) return;
+  if (!navigator.geolocation) {
+    btn.style.display = "none";
+    return;
+  }
+
+  btn.addEventListener("click", function () {
+    if (status) status.textContent = "Detecting location…";
+    btn.disabled = true;
+
+    navigator.geolocation.getCurrentPosition(
+      function (pos) {
+        const lat = pos.coords.latitude.toFixed(6);
+        const lon = pos.coords.longitude.toFixed(6);
+        if (latEl) { latEl.value = lat; latEl.dispatchEvent(new Event("input")); }
+        if (lonEl) { lonEl.value = lon; lonEl.dispatchEvent(new Event("input")); }
+        if (status) status.textContent = "✓ Location captured (" + lat + ", " + lon + ")";
+        btn.disabled = false;
+      },
+      function (err) {
+        const messages = {
+          1: "Location access denied. Please enter coordinates manually.",
+          2: "Location unavailable. Please enter coordinates manually.",
+          3: "Location request timed out. Please try again.",
+        };
+        if (status) status.textContent = messages[err.code] || "Location error.";
+        btn.disabled = false;
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  });
+}
+
 /* ── Complaint ID copy ────────────────────────────────────────────── */
 function initCopyId() {
   const box = $(".complaint-id-box");
@@ -249,4 +290,5 @@ document.addEventListener("DOMContentLoaded", () => {
   initDashboardFilters();
   initCopyId();
   initTableSort();
+  initGeolocate();
 });

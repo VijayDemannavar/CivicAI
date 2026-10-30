@@ -124,3 +124,7 @@ th.sortable { cursor: pointer; }
 th.sortable:hover { color: var(--brand-blue); }
 th.sort-asc::after  { content: " ↑"; color: var(--brand-blue); }
 th.sort-desc::after { content: " ↓"; color: var(--brand-blue); }
+
+/* data-table — alias that inherits all base table styles from main.css.
+   Used by hotspots.html summary table.  No additional overrides needed. */
+table.data-table { /* inherits width:100%, border-collapse:collapse, etc. */ }

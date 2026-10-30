@@ -15,7 +15,7 @@ from werkzeug.utils import secure_filename
 
 from flask import (
     Blueprint, render_template, request,
-    redirect, url_for, flash, current_app,
+    redirect, url_for, flash, current_app, abort,
 )
 
 import database as db
@@ -24,6 +24,7 @@ from config import (
     UPLOAD_DIR, ALLOWED_EXTENSIONS, MAX_IMAGE_SIZE_BYTES,
 )
 from ai.ai_engine import get_engine
+from routes.csrf import verify_csrf
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,10 @@ def complaint_form():
             errors=[],
             form_data={},
         )
+
+    # ── POST: CSRF check ──────────────────────────────────────────────
+    if not verify_csrf():
+        abort(403)
 
     # ── POST: validate and save ───────────────────────────────────────
     form   = request.form

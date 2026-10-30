@@ -456,6 +456,126 @@ def add_action_note(complaint_id: str, note: str) -> None:
     logger.info("Action note added to %s.", complaint_id)
 
 
+# ── Dashboard pagination helpers (Phase 4E) ──────────────────────────────────
+
+# Allowed sort columns (maps URL param → SQL column name)
+_SORT_COLUMNS = {
+    "complaint_id":  "complaint_id",
+    "title":         "title",
+    "category":      "category",
+    "address":       "address",
+    "status":        "status",
+    "priority":      "priority_score",
+    "submitted":     "created_at",
+}
+_DEFAULT_SORT  = "created_at"
+_DEFAULT_ORDER = "desc"
+
+
+def _build_complaints_where(
+    search: str = "",
+    category: str = "",
+    status: str = "",
+    priority: str = "",
+) -> tuple[str, list]:
+    """
+    Build the WHERE clause and parameter list for complaint list queries.
+
+    Parameters are user-supplied filter values (all optional, empty = no filter).
+    Returns (where_sql, params) where where_sql starts with 'WHERE' or is empty.
+    """
+    conditions: list[str] = []
+    params: list = []
+
+    if search:
+        like = f"%{search}%"
+        conditions.append(
+            "(complaint_id LIKE ? OR title LIKE ? OR address LIKE ?)"
+        )
+        params.extend([like, like, like])
+
+    if category:
+        conditions.append("category = ?")
+        params.append(category)
+
+    if status:
+        conditions.append("status = ?")
+        params.append(status)
+
+    if priority:
+        conditions.append("priority_level = ?")
+        params.append(priority)
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    return where, params
+
+
+def count_complaints(
+    search: str = "",
+    category: str = "",
+    status: str = "",
+    priority: str = "",
+) -> int:
+    """
+    Return the total number of complaints matching the given filters.
+    Used by the dashboard to compute total pages without loading all rows.
+    """
+    where, params = _build_complaints_where(search, category, status, priority)
+    sql = f"SELECT COUNT(*) FROM complaints {where};"
+    with db_cursor() as (conn, cur):
+        cur.execute(sql, params)
+        row = cur.fetchone()
+        return row[0] if row else 0
+
+
+def get_complaints_page(
+    page: int = 1,
+    page_size: int = 100,
+    search: str = "",
+    category: str = "",
+    status: str = "",
+    priority: str = "",
+    sort: str = _DEFAULT_SORT,
+    order: str = _DEFAULT_ORDER,
+) -> list[sqlite3.Row]:
+    """
+    Return a single page of complaint rows, applying filters, sort, and pagination.
+
+    Parameters
+    ----------
+    page:       1-based page number (clamped to valid range by caller)
+    page_size:  rows per page
+    search:     substring search on complaint_id, title, address
+    category:   exact match on category column
+    status:     exact match on status column
+    priority:   exact match on priority_level column
+    sort:       column identifier (must be a key in _SORT_COLUMNS)
+    order:      'asc' or 'desc'
+    """
+    # Sanitise sort / order to prevent SQL injection
+    sort_col = _SORT_COLUMNS.get(sort, _DEFAULT_SORT)
+    order_dir = "ASC" if str(order).lower() == "asc" else "DESC"
+
+    where, params = _build_complaints_where(search, category, status, priority)
+    offset = (page - 1) * page_size
+
+    sql = f"""
+        SELECT complaint_id, title, category, address,
+               status, priority_level, priority_score,
+               ai_category, ai_confidence, ai_needs_review,
+               created_at, department_id, assigned_officer
+        FROM complaints
+        {where}
+        ORDER BY {sort_col} {order_dir}
+        LIMIT ? OFFSET ?;
+    """
+    params.extend([page_size, offset])
+
+    with db_cursor() as (conn, cur):
+        cur.execute(sql, params)
+        return cur.fetchall()
+
+
 # ── Entry point (quick sanity check) ─────────────────────────────────────────
 
 if __name__ == "__main__":

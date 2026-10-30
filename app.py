@@ -16,6 +16,7 @@ import database as db
 from config import (
     SECRET_KEY, DEBUG, HOST, PORT,
     UPLOAD_DIR, BASE_DIR,
+    ADMIN_AUTH_MODE, ADMIN_PASSWORD,
 )
 from routes.submit import submit_bp
 from routes.admin  import admin_bp
@@ -29,14 +30,58 @@ logger = logging.getLogger(__name__)
 
 # ── Application factory ───────────────────────────────────────────────────────
 
-def create_app() -> Flask:
-    """Create and configure the Flask application."""
+def _validate_admin_auth_config(auth_mode: str, admin_password: str) -> None:
+    """
+    Validate admin authentication configuration at startup.
+
+    Raises RuntimeError if the configuration is unsafe or incomplete:
+      - "password" mode requires a non-empty CIVICAI_ADMIN_PASSWORD.
+      - Unknown auth modes are rejected.
+
+    This function is called before the app starts accepting requests so that
+    misconfigurations surface immediately rather than silently falling through.
+    """
+    valid_modes = {"open", "password", "disabled"}
+    if auth_mode not in valid_modes:
+        raise RuntimeError(
+            f"Invalid CIVICAI_ADMIN_AUTH_MODE '{auth_mode}'. "
+            f"Must be one of: {', '.join(sorted(valid_modes))}."
+        )
+    if auth_mode == "password" and not admin_password:
+        raise RuntimeError(
+            "CIVICAI_ADMIN_AUTH_MODE is 'password' but CIVICAI_ADMIN_PASSWORD "
+            "is not set.  Set the environment variable before starting the server."
+        )
+
+
+def create_app(
+    admin_auth_mode: str | None = None,
+    admin_password:  str | None = None,
+) -> Flask:
+    """
+    Create and configure the Flask application.
+
+    Parameters
+    ----------
+    admin_auth_mode:
+        Override ``config.ADMIN_AUTH_MODE`` (useful in tests).
+    admin_password:
+        Override ``config.ADMIN_PASSWORD`` (useful in tests).
+    """
+    # Resolve effective auth settings (caller overrides > env/config defaults)
+    effective_mode     = admin_auth_mode if admin_auth_mode is not None else ADMIN_AUTH_MODE
+    effective_password = admin_password  if admin_password  is not None else ADMIN_PASSWORD
+
     app = Flask(
         __name__,
         template_folder=os.path.join(BASE_DIR, "templates"),
         static_folder=os.path.join(BASE_DIR, "static"),
     )
     app.secret_key = SECRET_KEY
+
+    # Persist auth settings so the blueprint can read them at request time
+    app.config["ADMIN_AUTH_MODE"] = effective_mode
+    app.config["ADMIN_PASSWORD"]  = effective_password
 
     # ── CSRF: lightweight token via session ───────────────────────────
     # Full WTForms CSRF is Phase 3+. We inject a simple session token here
@@ -53,6 +98,11 @@ def create_app() -> Flask:
     def csrf_token():
         from flask import session
         return session.get("csrf_token", "")
+
+    # ── Startup validation (fail closed) ─────────────────────────────
+    # Skip in TESTING mode so unit tests can construct minimal apps freely.
+    if not app.config.get("TESTING"):
+        _validate_admin_auth_config(effective_mode, effective_password)
 
     # ── Blueprints ────────────────────────────────────────────────────
     app.register_blueprint(submit_bp)

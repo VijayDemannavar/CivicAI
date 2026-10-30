@@ -7,8 +7,15 @@ Routes:
   POST /admin/complaint/<complaint_id>/update     → update status + assignment (Phase 4B)
   POST /admin/complaint/<complaint_id>/add_note   → add action note (Phase 4B)
   GET  /admin/hotspots                            → geographic hotspot map (Phase 3D)
+
+Authentication (Phase 4D):
+  Controlled by config.ADMIN_AUTH_MODE:
+    "open"     – no credentials required (development)
+    "password" – HTTP Basic Auth via CIVICAI_ADMIN_PASSWORD env var
+    "disabled" – all routes return 503
 """
 
+import base64
 import hmac
 import logging
 import sqlite3
@@ -20,48 +27,102 @@ from flask import (
 from ai.hotspot_detector import get_hotspot_detector
 
 import database as db
-from config import COMPLAINT_CATEGORIES, COMPLAINT_STATUSES, PRIORITY_LEVELS
+from config import (
+    COMPLAINT_CATEGORIES, COMPLAINT_STATUSES, PRIORITY_LEVELS,
+    ADMIN_AUTH_MODE, ADMIN_PASSWORD, DASHBOARD_PAGE_SIZE,
+)
+from routes.csrf import verify_csrf
 
 logger = logging.getLogger(__name__)
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
 
+# ── Admin authentication (Phase 4D) ──────────────────────────────────────────
+
+def _check_admin_auth() -> None:
+    """
+    Enforce admin authentication based on ADMIN_AUTH_MODE.
+
+    Skipped entirely when ``app.config["TESTING"]`` is ``True`` so that the
+    existing test suite passes without supplying credentials.
+
+    Raises:
+        HTTP 503 – if ADMIN_AUTH_MODE is "disabled"
+        HTTP 401 – if ADMIN_AUTH_MODE is "password" and credentials are missing
+                   or incorrect
+    """
+    if current_app.config.get("TESTING"):
+        return  # bypass in test mode
+
+    mode = current_app.config.get("ADMIN_AUTH_MODE", ADMIN_AUTH_MODE)
+
+    if mode == "disabled":
+        abort(503)
+
+    if mode == "password":
+        expected_password = current_app.config.get("ADMIN_PASSWORD", ADMIN_PASSWORD)
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Basic "):
+            try:
+                decoded   = base64.b64decode(auth_header[6:]).decode("utf-8", errors="replace")
+                _user, _, supplied = decoded.partition(":")
+                if expected_password and hmac.compare_digest(supplied, expected_password):
+                    return  # authenticated
+            except Exception:
+                pass
+        # Not authenticated: challenge the browser
+        from flask import make_response
+        resp = make_response("Admin authentication required.", 401)
+        resp.headers["WWW-Authenticate"] = 'Basic realm="CivicAI Admin"'
+        abort(resp)
+
+    # mode == "open" → no check required
+
+
+@admin_bp.before_request
+def _admin_auth_before_request():
+    _check_admin_auth()
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _get_stats(complaints: list) -> dict:
-    """Compute summary statistics from a list of complaint rows."""
-    def count(status):
-        return sum(1 for c in complaints if c["status"] == status)
-
-    return {
-        "total":        len(complaints),
-        "submitted":    count("Submitted"),
-        "under_review": count("Under Review"),
-        "assigned":     count("Assigned"),
-        "in_progress":  count("In Progress"),
-        "resolved":     count("Resolved"),
-        "closed":       count("Closed"),
-        "rejected":     count("Rejected"),
-        "critical":     sum(1 for c in complaints if c["priority_level"] == "Critical"),
-    }
-
-
-def _get_all_complaints() -> list:
+def _get_global_stats() -> dict:
     """
-    Return all complaints ordered by created_at desc.
-    Returns a list of sqlite3.Row objects.
+    Compute global summary statistics directly from the database.
+    Always reflects total counts across ALL complaints — independent of
+    the current page / filter so the stat cards are always accurate.
     """
     with db.db_cursor() as (conn, cur):
         cur.execute(
-            """SELECT complaint_id, title, category, address,
-                      status, priority_level, priority_score,
-                      ai_category, ai_confidence, ai_needs_review,
-                      created_at, department_id, assigned_officer
-               FROM complaints
-               ORDER BY created_at DESC;"""
+            """SELECT
+                 COUNT(*)                                          AS total,
+                 SUM(status = 'Submitted')                        AS submitted,
+                 SUM(status = 'Under Review')                     AS under_review,
+                 SUM(status = 'Assigned')                         AS assigned,
+                 SUM(status = 'In Progress')                      AS in_progress,
+                 SUM(status = 'Resolved')                         AS resolved,
+                 SUM(status = 'Closed')                           AS closed,
+                 SUM(status = 'Rejected')                         AS rejected,
+                 SUM(priority_level = 'Critical')                 AS critical
+               FROM complaints;"""
         )
-        return cur.fetchall()
+        row = cur.fetchone()
+        if row is None:
+            return {k: 0 for k in ("total", "submitted", "under_review",
+                                   "assigned", "in_progress", "resolved",
+                                   "closed", "rejected", "critical")}
+        return {
+            "total":        row["total"]        or 0,
+            "submitted":    row["submitted"]    or 0,
+            "under_review": row["under_review"] or 0,
+            "assigned":     row["assigned"]     or 0,
+            "in_progress":  row["in_progress"]  or 0,
+            "resolved":     row["resolved"]     or 0,
+            "closed":       row["closed"]       or 0,
+            "rejected":     row["rejected"]     or 0,
+            "critical":     row["critical"]     or 0,
+        }
 
 
 def _get_department(department_id: int | None) -> sqlite3.Row | None:
@@ -118,11 +179,51 @@ def _get_duplicate_links(complaint_id: str) -> list:
 @admin_bp.route("/")
 def dashboard():
     """
-    Admin dashboard.
-    Loads all complaints; client-side JS handles search/filter.
+    Admin dashboard with server-side pagination, search, filter, and sort.
+
+    Query parameters (all optional):
+        q         – search substring (complaint_id, title, address)
+        category  – exact category name
+        status    – exact status name
+        priority  – exact priority level
+        sort      – column key (complaint_id | title | category | address |
+                                status | priority | submitted)
+        order     – asc | desc
+        page      – 1-based page number (default 1)
     """
-    complaints = _get_all_complaints()
-    stats      = _get_stats(complaints)
+    # ── Read and sanitise query params ────────────────────────────────
+    search   = request.args.get("q",        "").strip()
+    category = request.args.get("category", "").strip()
+    status   = request.args.get("status",   "").strip()
+    priority = request.args.get("priority", "").strip()
+    sort     = request.args.get("sort",     "submitted").strip()
+    order    = request.args.get("order",    "desc").strip().lower()
+    if order not in ("asc", "desc"):
+        order = "desc"
+
+    # ── Pagination ────────────────────────────────────────────────────
+    page_size = DASHBOARD_PAGE_SIZE
+    try:
+        page = int(request.args.get("page", 1))
+    except (ValueError, TypeError):
+        page = 1
+
+    total_matching = db.count_complaints(
+        search=search, category=category,
+        status=status, priority=priority,
+    )
+    total_pages = max(1, -(-total_matching // page_size))   # ceiling division
+    page        = max(1, min(page, total_pages))            # clamp to valid range
+
+    complaints = db.get_complaints_page(
+        page=page, page_size=page_size,
+        search=search, category=category,
+        status=status, priority=priority,
+        sort=sort, order=order,
+    )
+
+    # Global stats always reflect all complaints (not just current page/filter)
+    stats = _get_global_stats()
 
     return render_template(
         "admin/dashboard.html",
@@ -131,6 +232,18 @@ def dashboard():
         categories=COMPLAINT_CATEGORIES,
         statuses=COMPLAINT_STATUSES,
         priority_levels=PRIORITY_LEVELS,
+        # Pagination context
+        page=page,
+        total_pages=total_pages,
+        total_matching=total_matching,
+        page_size=page_size,
+        # Active filter context (for preserving in pagination links)
+        active_q=search,
+        active_category=category,
+        active_status=status,
+        active_priority=priority,
+        active_sort=sort,
+        active_order=order,
     )
 
 
@@ -169,29 +282,7 @@ def complaint_detail(complaint_id: str):
     )
 
 
-# ── CSRF helper (Phase 4B) ────────────────────────────────────────────────────
-
-def _verify_csrf() -> bool:
-    """
-    Timing-safe comparison of the submitted CSRF token against the session value.
-
-    Returns True (valid) or False (invalid / missing).
-    Automatically passes when app.config["TESTING"] is True so that the existing
-    test suite, which does not inject tokens, continues to pass unchanged.
-    """
-    if current_app.config.get("TESTING"):
-        return True
-    submitted = request.form.get("csrf_token", "")
-    expected  = request.environ.get("HTTP_X_CSRF_TOKEN") or ""
-    # prefer session-stored token
-    from flask import session
-    expected = session.get("csrf_token", "")
-    if not submitted or not expected:
-        return False
-    return hmac.compare_digest(submitted, expected)
-
-
-# ── Admin write routes (Phase 4B) ─────────────────────────────────────────────
+# ── Admin write routes (Phase 4B / 4D) ───────────────────────────────────────
 
 _NOTE_MAX_LEN = 1000   # maximum characters for an action note
 
@@ -209,7 +300,7 @@ def complaint_update(complaint_id: str):
 
     CSRF-protected: rejects requests without a valid session token.
     """
-    if not _verify_csrf():
+    if not verify_csrf():
         abort(403)
 
     complaint = db.get_complaint_by_id(complaint_id)
@@ -292,7 +383,7 @@ def complaint_add_note(complaint_id: str):
 
     CSRF-protected.
     """
-    if not _verify_csrf():
+    if not verify_csrf():
         abort(403)
 
     complaint = db.get_complaint_by_id(complaint_id)

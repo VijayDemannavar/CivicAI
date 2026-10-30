@@ -75,3 +75,16 @@ AI_PRIORITY_MEDIUM_MIN      = 25     # score >= 25 → Medium
 
 # Action brief settings (Phase 3E)
 AI_BRIEF_MAX_STEPS          = 5      # max recommended steps in a brief
+
+# ── Admin authentication (Phase 4D) ──────────────────────────────────────────
+# ADMIN_AUTH_MODE controls how /admin/* routes are protected.
+#   "open"     – no authentication required (local dev only)
+#   "password" – HTTP Basic Auth using CIVICAI_ADMIN_PASSWORD env var
+#   "disabled" – admin routes return 503 (maintenance / lockdown)
+# The application refuses to start in "password" mode if the env var is empty.
+ADMIN_AUTH_MODE     = os.environ.get("CIVICAI_ADMIN_AUTH_MODE", "open")
+ADMIN_PASSWORD      = os.environ.get("CIVICAI_ADMIN_PASSWORD", "")
+
+# ── Dashboard pagination (Phase 4E) ──────────────────────────────────────────
+# Maximum complaints shown per page on the admin dashboard.
+DASHBOARD_PAGE_SIZE = int(os.environ.get("CIVICAI_PAGE_SIZE", "100"))

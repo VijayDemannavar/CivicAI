@@ -146,6 +146,76 @@
       </div>
       {% endif %}
 
+      <!-- ── Update Status form ─────────────────────────────────────── -->
+      <div class="card" style="margin-bottom:1.25rem;">
+        <h2 class="card-title">✏️ Update Status</h2>
+        <form method="POST"
+              action="{{ url_for('admin.complaint_update', complaint_id=complaint.complaint_id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin-bottom:.75rem;">
+            <div>
+              <label for="new_status" style="font-size:.82rem;">New Status</label>
+              <select id="new_status" name="new_status" style="font-size:.88rem;">
+                <option value="">— No change —</option>
+                {% for st in statuses %}
+                  <option value="{{ st }}"
+                    {{ 'selected' if complaint.status == st else '' }}>
+                    {{ st }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div>
+              <label for="action_note_status" style="font-size:.82rem;">Note (optional)</label>
+              <input type="text" id="action_note_status" name="action_note"
+                     placeholder="Reason for status change"
+                     maxlength="300" style="font-size:.88rem;">
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary" style="font-size:.85rem;padding:.4rem 1rem;">
+            Update Status
+          </button>
+        </form>
+      </div>
+
+      <!-- ── Assign Department / Officer form ──────────────────────── -->
+      <div class="card" style="margin-bottom:1.25rem;">
+        <h2 class="card-title">🏢 Assign Department &amp; Officer</h2>
+        <form method="POST"
+              action="{{ url_for('admin.complaint_update', complaint_id=complaint.complaint_id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin-bottom:.75rem;">
+            <div>
+              <label for="department_id" style="font-size:.82rem;">Department</label>
+              <select id="department_id" name="department_id" style="font-size:.88rem;">
+                <option value="0">— Unassigned —</option>
+                {% for dept in departments %}
+                  <option value="{{ dept.id }}"
+                    {{ 'selected' if complaint.department_id == dept.id else '' }}>
+                    {{ dept.department_name | e }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div>
+              <label for="officer_id" style="font-size:.82rem;">Officer</label>
+              <select id="officer_id" name="officer_id" style="font-size:.88rem;">
+                <option value="0">— Unassigned —</option>
+                {% for off in all_officers %}
+                  <option value="{{ off.id }}"
+                    {{ 'selected' if complaint.assigned_officer == off.id else '' }}>
+                    {{ off.officer_name | e }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary" style="font-size:.85rem;padding:.4rem 1rem;">
+            Save Assignment
+          </button>
+        </form>
+      </div>
+
     </div><!-- /left -->
 
     <!-- ── Right column: sidebar ───────────────────────────────────── -->
@@ -223,6 +293,27 @@
           {% else %}
           <p class="text-muted text-sm">No duplicate complaints detected.</p>
           {% endif %}
+        </div>
+      </div>
+
+      <!-- Add Action Note form -->
+      <div class="sidebar-card" style="margin-bottom:1.25rem;">
+        <div class="sidebar-header">📝 Add Action Note</div>
+        <div class="sidebar-body">
+          <form method="POST"
+                action="{{ url_for('admin.complaint_add_note', complaint_id=complaint.complaint_id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="form-group" style="margin-bottom:.6rem;">
+              <textarea name="note" rows="3"
+                        placeholder="Enter action note…"
+                        maxlength="1000"
+                        style="font-size:.85rem;resize:vertical;min-height:70px;"></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary"
+                    style="font-size:.82rem;padding:.35rem .85rem;">
+              Add Note
+            </button>
+          </form>
         </div>
       </div>
 

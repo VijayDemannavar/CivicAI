@@ -359,6 +359,103 @@ def save_duplicate_link(
         )
 
 
+def update_complaint_status(
+    complaint_id: str,
+    new_status: str,
+    action_note: str | None = None,
+) -> None:
+    """
+    Update a complaint's status and record the transition in status_history.
+    Sets resolved_at when new_status is 'Resolved' or 'Closed'.
+    Never overwrites resolved_at once it is already set.
+    """
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "SELECT status, resolved_at FROM complaints WHERE complaint_id = ?;",
+            (complaint_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise ValueError(f"Complaint not found: {complaint_id}")
+        old_status   = row["status"]
+        resolved_at  = row["resolved_at"]
+
+        # Set resolved_at only when first reaching a terminal status
+        if new_status in ("Resolved", "Closed") and resolved_at is None:
+            cur.execute(
+                """UPDATE complaints
+                   SET status      = ?,
+                       resolved_at = datetime('now'),
+                       updated_at  = datetime('now')
+                   WHERE complaint_id = ?;""",
+                (new_status, complaint_id),
+            )
+        else:
+            cur.execute(
+                """UPDATE complaints
+                   SET status     = ?,
+                       updated_at = datetime('now')
+                   WHERE complaint_id = ?;""",
+                (new_status, complaint_id),
+            )
+
+        cur.execute(
+            """INSERT INTO status_history
+               (complaint_id, old_status, new_status, action_note)
+               VALUES (?, ?, ?, ?);""",
+            (complaint_id, old_status, new_status, action_note),
+        )
+    logger.info("Status updated: %s → %s", complaint_id, new_status)
+
+
+def assign_complaint(
+    complaint_id: str,
+    department_id: int | None,
+    officer_id: int | None,
+) -> None:
+    """
+    Assign (or unassign) a department and officer to a complaint.
+    Accepts None to clear an assignment.
+    """
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "SELECT id FROM complaints WHERE complaint_id = ?;",
+            (complaint_id,),
+        )
+        if cur.fetchone() is None:
+            raise ValueError(f"Complaint not found: {complaint_id}")
+
+        cur.execute(
+            """UPDATE complaints
+               SET department_id    = ?,
+                   assigned_officer = ?,
+                   updated_at       = datetime('now')
+               WHERE complaint_id   = ?;""",
+            (department_id, officer_id, complaint_id),
+        )
+    logger.info("Assigned: %s → dept=%s officer=%s", complaint_id, department_id, officer_id)
+
+
+def add_action_note(complaint_id: str, note: str) -> None:
+    """
+    Append an action note to a complaint.
+    Raises ValueError if the complaint does not exist.
+    """
+    with db_cursor() as (conn, cur):
+        cur.execute(
+            "SELECT id FROM complaints WHERE complaint_id = ?;",
+            (complaint_id,),
+        )
+        if cur.fetchone() is None:
+            raise ValueError(f"Complaint not found: {complaint_id}")
+
+        cur.execute(
+            "INSERT INTO action_notes (complaint_id, note) VALUES (?, ?);",
+            (complaint_id, note),
+        )
+    logger.info("Action note added to %s.", complaint_id)
+
+
 # ── Entry point (quick sanity check) ─────────────────────────────────────────
 
 if __name__ == "__main__":

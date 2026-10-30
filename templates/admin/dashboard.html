@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block title %}Admin Dashboard{% endblock %}
+
+{% block content %}
+<div class="container">
+  <div class="page-header">
+    <div class="flex justify-between items-center" style="flex-wrap:wrap;gap:1rem;">
+      <div>
+        <h1>📊 Admin Dashboard</h1>
+        <p>All civic complaints — search, filter, and track status.</p>
+      </div>
+      <a href="{{ url_for('submit.complaint_form') }}" class="btn btn-primary">
+        + New Complaint
+      </a>
+    </div>
+  </div>
+
+  <!-- ── Stats ─────────────────────────────────────────────────────── -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-icon blue">📋</div>
+      <div>
+        <div class="stat-value">{{ stats.total }}</div>
+        <div class="stat-label">Total Complaints</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon orange">🕐</div>
+      <div>
+        <div class="stat-value">{{ stats.submitted + stats.under_review }}</div>
+        <div class="stat-label">Pending</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon purple">⚙️</div>
+      <div>
+        <div class="stat-value">{{ stats.assigned + stats.in_progress }}</div>
+        <div class="stat-label">In Progress</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon green">✅</div>
+      <div>
+        <div class="stat-value">{{ stats.resolved + stats.closed }}</div>
+        <div class="stat-label">Resolved</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon red">🚨</div>
+      <div>
+        <div class="stat-value">{{ stats.critical }}</div>
+        <div class="stat-label">Critical Priority</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Filters ───────────────────────────────────────────────────── -->
+  <div class="filters-bar">
+    <input type="text" id="search-input" class="search-input"
+           placeholder="🔍 Search by ID, title, location…"
+           value="{{ request.args.get('q', '') }}"
+           aria-label="Search complaints">
+
+    <select id="filter-category" aria-label="Filter by category">
+      <option value="">All Categories</option>
+      {% for cat in categories %}
+        <option value="{{ cat }}"
+          {{ 'selected' if request.args.get('category') == cat else '' }}>
+          {{ cat }}
+        </option>
+      {% endfor %}
+    </select>
+
+    <select id="filter-status" aria-label="Filter by status">
+      <option value="">All Statuses</option>
+      {% for st in statuses %}
+        <option value="{{ st }}"
+          {{ 'selected' if request.args.get('status') == st else '' }}>
+          {{ st }}
+        </option>
+      {% endfor %}
+    </select>
+
+    <select id="filter-priority" aria-label="Filter by priority">
+      <option value="">All Priorities</option>
+      {% for p in priority_levels %}
+        <option value="{{ p }}"
+          {{ 'selected' if request.args.get('priority') == p else '' }}>
+          {{ p }}
+        </option>
+      {% endfor %}
+    </select>
+
+    <button id="clear-filters" class="btn btn-secondary">✕ Clear</button>
+  </div>
+
+  <p id="results-count" class="results-info"></p>
+
+  <!-- ── Table ─────────────────────────────────────────────────────── -->
+  {% if complaints %}
+  <div class="table-wrap">
+    <table aria-label="Complaints list">
+      <thead>
+        <tr>
+          <th class="sortable" data-col="0">Complaint ID</th>
+          <th class="sortable" data-col="1">Title</th>
+          <th class="sortable" data-col="2">Category</th>
+          <th class="sortable" data-col="3">Location</th>
+          <th class="sortable" data-col="4">Status</th>
+          <th class="sortable" data-col="5">Priority</th>
+          <th class="sortable" data-col="6">Submitted</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="complaints-tbody">
+        {% for c in complaints %}
+        {# Build a searchable text blob for client-side filtering #}
+        {% set search_text = (c.complaint_id ~ ' ' ~ c.title ~ ' ' ~ (c.address or '') ~ ' ' ~ c.category ~ ' ' ~ c.status) | lower %}
+        <tr data-cid="{{ c.complaint_id }}"
+            data-text="{{ search_text }}"
+            data-cat="{{ c.category }}"
+            data-status="{{ c.status }}"
+            data-priority="{{ c.priority_level }}">
+          <td class="td-id">{{ c.complaint_id }}</td>
+          <td class="td-title">
+            <a href="{{ url_for('admin.complaint_detail', complaint_id=c.complaint_id) }}">
+              {{ c.title | truncate(55) }}
+            </a>
+            {% if c.ai_needs_review %}
+              <span class="badge badge-under-review" style="font-size:.7rem;padding:.1rem .4rem;margin-left:.35rem;"
+                    title="AI categorisation needs manual review">🤖 Review</span>
+            {% endif %}
+          </td>
+          <td class="td-truncate">{{ c.category }}</td>
+          <td class="td-truncate">{{ c.address or '—' }}</td>
+          <td>
+            {% set status_class = c.status | lower | replace(' ', '-') %}
+            <span class="badge badge-{{ status_class }}">{{ c.status }}</span>
+          </td>
+          <td>
+            {% set p_class = c.priority_level | lower %}
+            <span class="badge badge-{{ p_class }}">{{ c.priority_level }}</span>
+          </td>
+          <td class="td-date">{{ c.created_at[:10] }}</td>
+          <td>
+            <a href="{{ url_for('admin.complaint_detail', complaint_id=c.complaint_id) }}"
+               class="action-link">View</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div id="empty-state" class="empty-state" style="display:none;">
+    <div class="empty-icon">🔍</div>
+    <p>No complaints match your search criteria.</p>
+    <button id="clear-filters-inline" class="btn btn-secondary mt-2"
+            onclick="document.getElementById('clear-filters').click()">
+      Clear Filters
+    </button>
+  </div>
+
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-icon">📭</div>
+    <p>No complaints have been submitted yet.</p>
+    <a href="{{ url_for('submit.complaint_form') }}" class="btn btn-primary mt-2">
+      Report First Issue
+    </a>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

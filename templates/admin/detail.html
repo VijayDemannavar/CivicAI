@@ -1,0 +1,300 @@
+{% extends "base.html" %}
+{% block title %}{{ complaint.complaint_id }} – Complaint Detail{% endblock %}
+
+{% block content %}
+<div class="container">
+
+  <!-- Breadcrumb -->
+  <nav aria-label="Breadcrumb" style="margin-bottom:1rem;font-size:.85rem;color:var(--text-muted);">
+    <a href="{{ url_for('admin.dashboard') }}">Dashboard</a>
+    &rsaquo;
+    <span>{{ complaint.complaint_id }}</span>
+  </nav>
+
+  <!-- Page header -->
+  <div class="page-header">
+    <div class="flex justify-between items-center" style="flex-wrap:wrap;gap:1rem;">
+      <div>
+        <h1 style="font-size:1.4rem;">{{ complaint.title }}</h1>
+        <p class="text-muted text-sm" style="margin-top:.25rem;">
+          <span class="td-id">{{ complaint.complaint_id }}</span>
+          &nbsp;&middot;&nbsp;
+          Submitted {{ complaint.created_at[:16] }}
+        </p>
+      </div>
+      <div class="flex gap-1" style="flex-wrap:wrap;">
+        {% set status_class = complaint.status | lower | replace(' ', '-') %}
+        <span class="badge badge-{{ status_class }}" style="padding:.4rem .9rem;font-size:.9rem;">
+          {{ complaint.status }}
+        </span>
+        {% set p_class = complaint.priority_level | lower %}
+        <span class="badge badge-{{ p_class }}" style="padding:.4rem .9rem;font-size:.9rem;">
+          {{ complaint.priority_level }} Priority
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main grid -->
+  <div class="detail-grid">
+
+    <!-- ── Left column: main info ──────────────────────────────────── -->
+    <div>
+
+      <!-- Description -->
+      <div class="card" style="margin-bottom:1.25rem;">
+        <h2 class="card-title">📄 Description</h2>
+        <div class="detail-description">{{ complaint.description }}</div>
+      </div>
+
+      <!-- Meta grid -->
+      <div class="card" style="margin-bottom:1.25rem;">
+        <h2 class="card-title">ℹ️ Details</h2>
+        <div class="detail-meta">
+          <div class="meta-item">
+            <label>Category</label>
+            <span>{{ complaint.category }}</span>
+          </div>
+          <div class="meta-item">
+            <label>Status</label>
+            <span class="badge badge-{{ complaint.status | lower | replace(' ', '-') }}">
+              {{ complaint.status }}
+            </span>
+          </div>
+          <div class="meta-item">
+            <label>Priority Score</label>
+            <span>{{ "%.1f"|format(complaint.priority_score) }} / 10</span>
+          </div>
+          <div class="meta-item">
+            <label>Priority Level</label>
+            <span class="badge badge-{{ complaint.priority_level | lower }}">
+              {{ complaint.priority_level }}
+            </span>
+          </div>
+          {% if complaint.address %}
+          <div class="meta-item" style="grid-column:1/-1;">
+            <label>Address</label>
+            <span>{{ complaint.address }}</span>
+          </div>
+          {% endif %}
+          {% if complaint.latitude and complaint.longitude %}
+          <div class="meta-item">
+            <label>Latitude</label>
+            <span>{{ complaint.latitude }}</span>
+          </div>
+          <div class="meta-item">
+            <label>Longitude</label>
+            <span>{{ complaint.longitude }}</span>
+          </div>
+          {% endif %}
+          {% if department %}
+          <div class="meta-item">
+            <label>Department</label>
+            <span>{{ department.department_name }}</span>
+          </div>
+          {% endif %}
+          {% if officer %}
+          <div class="meta-item">
+            <label>Assigned Officer</label>
+            <span>{{ officer.officer_name }}</span>
+          </div>
+          {% endif %}
+          <div class="meta-item">
+            <label>Submitted</label>
+            <span>{{ complaint.created_at[:16] }}</span>
+          </div>
+          <div class="meta-item">
+            <label>Last Updated</label>
+            <span>{{ complaint.updated_at[:16] }}</span>
+          </div>
+          {% if complaint.resolved_at %}
+          <div class="meta-item">
+            <label>Resolved At</label>
+            <span>{{ complaint.resolved_at[:16] }}</span>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Location map placeholder (Phase 5: Leaflet) -->
+      {% if complaint.latitude and complaint.longitude %}
+      <div class="card" style="margin-bottom:1.25rem;">
+        <h2 class="card-title">📍 Location</h2>
+        <div class="map-placeholder">
+          <span class="map-icon">🗺</span>
+          <span>{{ complaint.latitude }}, {{ complaint.longitude }}</span>
+          <span style="font-size:.75rem;">Interactive map in Phase 5</span>
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Action notes -->
+      {% if action_notes %}
+      <div class="card" style="margin-bottom:1.25rem;">
+        <h2 class="card-title">📝 Action Notes</h2>
+        <ul class="history-list">
+          {% for note in action_notes %}
+          <li class="history-item">
+            <span class="history-dot" style="background:var(--accent-green);"></span>
+            <div>
+              <p style="font-size:.9rem;">{{ note.note }}</p>
+              <p class="text-muted text-sm">{{ note.created_at[:16] }}</p>
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+
+    </div><!-- /left -->
+
+    <!-- ── Right column: sidebar ───────────────────────────────────── -->
+    <div>
+
+      <!-- Image -->
+      {% if complaint.image_path %}
+      <div class="sidebar-card" style="margin-bottom:1.25rem;">
+        <div class="sidebar-header">📷 Photo Evidence</div>
+        <div class="sidebar-body">
+          <img src="{{ url_for('serve_upload', filename=complaint.image_path) }}"
+               alt="Complaint image"
+               class="complaint-image">
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Status history -->
+      <div class="sidebar-card" style="margin-bottom:1.25rem;">
+        <div class="sidebar-header">🕐 Status History</div>
+        <div class="sidebar-body">
+          {% if status_history %}
+          <ul class="history-list">
+            {% for h in status_history %}
+            <li class="history-item">
+              <span class="history-dot"></span>
+              <div>
+                <p style="font-size:.85rem;font-weight:600;">
+                  {% if h.old_status %}
+                    {{ h.old_status }} → {{ h.new_status }}
+                  {% else %}
+                    {{ h.new_status }}
+                  {% endif %}
+                </p>
+                {% if h.action_note %}
+                <p style="font-size:.82rem;color:var(--text-muted);">{{ h.action_note }}</p>
+                {% endif %}
+                <p class="text-muted text-sm">{{ h.changed_at[:16] }}</p>
+              </div>
+            </li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          <p class="text-muted text-sm">No history recorded.</p>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Duplicate links -->
+      <div class="sidebar-card" style="margin-bottom:1.25rem;">
+        <div class="sidebar-header">🔁 Duplicate / Related Reports</div>
+        <div class="sidebar-body">
+          {% if duplicate_links %}
+          <ul class="history-list">
+            {% for d in duplicate_links %}
+            <li class="history-item">
+              <span class="history-dot" style="background:var(--accent-orange);"></span>
+              <div>
+                <a href="{{ url_for('admin.complaint_detail', complaint_id=d.matched_complaint_id) }}"
+                   style="font-size:.85rem;font-weight:600;">
+                  {{ d.matched_complaint_id }}
+                </a>
+                <p class="text-muted text-sm">
+                  Similarity: {{ "%.0f"|format(d.similarity_score * 100) }}%
+                </p>
+                {% if d.explanation %}
+                <p class="text-muted text-sm" style="font-style:italic;">
+                  {{ d.explanation | truncate(90) }}
+                </p>
+                {% endif %}
+              </div>
+            </li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          <p class="text-muted text-sm">No duplicate complaints detected.</p>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- AI Analysis (Phase 3) -->
+      <div class="sidebar-card">
+        <div class="sidebar-header">🤖 AI Analysis</div>
+        <div class="sidebar-body" style="font-size:.87rem;">
+
+          {# ── Categorisation ── #}
+          <p style="font-weight:700;margin-bottom:.5rem;">Categorisation</p>
+          <table style="width:100%;border-collapse:collapse;font-size:.85rem;">
+            <tr>
+              <td style="color:var(--text-muted);padding:.2rem .4rem .2rem 0;width:46%;">Citizen category</td>
+              <td style="padding:.2rem 0;">{{ complaint.category }}</td>
+            </tr>
+            <tr>
+              <td style="color:var(--text-muted);padding:.2rem .4rem .2rem 0;">AI prediction</td>
+              <td style="padding:.2rem 0;">
+                {% if complaint.ai_category %}
+                  {{ complaint.ai_category }}
+                  {% if complaint.ai_category != complaint.category %}
+                    <span style="color:var(--accent-orange);font-size:.75rem;margin-left:.3rem;">⚠ differs</span>
+                  {% endif %}
+                {% else %}
+                  <span class="text-muted">Not analysed yet</span>
+                {% endif %}
+              </td>
+            </tr>
+            <tr>
+              <td style="color:var(--text-muted);padding:.2rem .4rem .2rem 0;">Confidence</td>
+              <td style="padding:.2rem 0;">
+                {% if complaint.ai_confidence is not none and complaint.ai_confidence %}
+                  {{ "%.0f"|format(complaint.ai_confidence * 100) }}%
+                {% else %}
+                  <span class="text-muted">—</span>
+                {% endif %}
+              </td>
+            </tr>
+            <tr>
+              <td style="color:var(--text-muted);padding:.2rem .4rem .2rem 0;">Review needed</td>
+              <td style="padding:.2rem 0;">
+                {% if complaint.ai_needs_review %}
+                  <span class="badge badge-under-review">⚠ Yes</span>
+                {% else %}
+                  <span class="badge badge-resolved">✓ No</span>
+                {% endif %}
+              </td>
+            </tr>
+          </table>
+
+          {% if complaint.ai_explanation %}
+          <p style="margin-top:.65rem;color:var(--text-muted);font-style:italic;font-size:.82rem;line-height:1.5;">
+            {{ complaint.ai_explanation }}
+          </p>
+          {% endif %}
+
+          {% if complaint.priority_reason %}
+          <p style="margin-top:.65rem;"><strong>Priority Reason:</strong> {{ complaint.priority_reason }}</p>
+          {% endif %}
+
+        </div>
+      </div>
+
+    </div><!-- /right -->
+  </div><!-- /detail-grid -->
+
+  <!-- Back button -->
+  <div style="margin-top:1.5rem;">
+    <a href="{{ url_for('admin.dashboard') }}" class="btn btn-secondary">
+      ← Back to Dashboard
+    </a>
+  </div>
+
+</div>
+{% endblock %}

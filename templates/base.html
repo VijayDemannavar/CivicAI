@@ -31,6 +31,10 @@
            class="nav-link {% if request.endpoint == 'admin.hotspots' %}active{% endif %}">
           🗺 Hotspots
         </a>
+        <a href="{{ url_for('admin.action_brief') }}"
+           class="nav-link {% if request.endpoint == 'admin.action_brief' or request.endpoint == 'admin.action_brief_generate' %}active{% endif %}">
+          📋 Brief
+        </a>
       </div>
     </div>
   </nav>

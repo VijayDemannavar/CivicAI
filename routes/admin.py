@@ -459,3 +459,55 @@ def hotspots():
         hotspots_json=hotspots_data,    # plain dicts for tojson → Leaflet JS
         total_geo=len(geo_complaints),
     )
+
+
+# ── Action Brief (Phase 3E) ───────────────────────────────────────────────────
+
+def _get_all_complaints_for_brief() -> list[dict]:
+    """
+    Return all complaint rows as plain dicts for the ActionBriefGenerator.
+    Includes every column the generator needs: category, status, priority,
+    address, department_id, etc.
+    """
+    with db.db_cursor() as (conn, cur):
+        cur.execute(
+            """SELECT complaint_id, title, category, address,
+                      status, priority_level, priority_score,
+                      department_id, assigned_officer,
+                      latitude, longitude
+               FROM complaints
+               ORDER BY created_at DESC;"""
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+@admin_bp.route("/brief")
+def action_brief():
+    """
+    Admin Action Brief page.
+    Generates a situation brief from all current complaints on first visit.
+    The page includes a "Refresh" button that POSTs to /brief/generate.
+    Read-only — no DB writes.
+    """
+    from ai.action_brief import get_brief_generator
+    complaints   = _get_all_complaints_for_brief()
+    geo_comps    = _get_geo_complaints()
+    detector     = get_hotspot_detector()
+    hotspot_list = detector.detect([dict(c) for c in geo_comps])
+
+    generator = get_brief_generator()
+    brief     = generator.generate(complaints, hotspot_list)
+
+    return render_template("admin/brief.html", brief=brief)
+
+
+@admin_bp.route("/brief/generate", methods=["POST"])
+def action_brief_generate():
+    """
+    Refresh the action brief.  Redirects back to the brief page.
+    CSRF-protected so the POST cannot be forged.
+    """
+    if not verify_csrf():
+        abort(403)
+    flash("Action brief refreshed.", "success")
+    return redirect(url_for("admin.action_brief"))

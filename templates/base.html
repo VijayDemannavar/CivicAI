@@ -24,8 +24,12 @@
           📝 Report Issue
         </a>
         <a href="{{ url_for('admin.dashboard') }}"
-           class="nav-link {% if request.endpoint and request.endpoint.startswith('admin.') %}active{% endif %}">
+           class="nav-link {% if request.endpoint == 'admin.dashboard' or request.endpoint == 'admin.complaint_detail' %}active{% endif %}">
           📊 Admin
+        </a>
+        <a href="{{ url_for('admin.hotspots') }}"
+           class="nav-link {% if request.endpoint == 'admin.hotspots' %}active{% endif %}">
+          🗺 Hotspots
         </a>
       </div>
     </div>
@@ -49,7 +53,7 @@
   <footer>
     <div class="container">
       CivicAI &mdash; From Complaints to Action &nbsp;&middot;&nbsp; PromptWars &times; ASTRA Hackathon
-      &nbsp;&middot;&nbsp; Phase 2
+      &nbsp;&middot;&nbsp; Phase 3D
     </div>
   </footer>
 

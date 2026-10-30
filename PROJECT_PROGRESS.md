@@ -1,9 +1,9 @@
 # CivicAI – Project Progress
 
-**Project:** CivicAI – From Complaints to Action  
-**Hackathon:** PromptWars × ASTRA  
-**Last saved:** 2026-10-30  
-**Current test result:** ✅ 117 / 117 passed, 6 subtests passed  
+**Project:** CivicAI – From Complaints to Action
+**Hackathon:** PromptWars × ASTRA
+**Last saved:** 2026-10-30
+**Current test result:** ✅ 147 / 147 passed, 6 subtests passed
 **Database records:** 51 complaints · 6 departments · 12 officers · 5 duplicate links · 52 status history rows · 8 action notes
 
 ---
@@ -13,7 +13,7 @@
 ```
 Phase 1  ✅  Architecture, Database, Synthetic Data
 Phase 2  ✅  Flask Backend, Routes, Frontend Templates
-Phase 3  🔄  AI Engine (3A ✅ 3B ✅ 3C ✅ | 3D ❌ 3E ❌)
+Phase 3  🔄  AI Engine (3A ✅ 3B ✅ 3C ✅ 3D ✅ | 3E ❌)
 Phase 4  ❌  Not started
 Phase 5  ❌  Not started
 Phase 6  ❌  Not started
@@ -143,17 +143,32 @@ Phase 7  ❌  Not started
 
 ## Partially Completed Features
 
-### Phase 3D – Hotspot Detector 🔄 (stub only)
+### Phase 3D – Hotspot Detector ✅
 
 | Item | Status |
 |------|--------|
-| `ai/hotspot_detector.py` | ⚠️ Stub — logs "not implemented", returns empty list |
-| Hotspot clustering algorithm | ❌ Not started |
-| Hotspot map view (Leaflet) | ❌ Not started |
-| DB columns for hotspot data | ❌ Not started |
-| Tests | ❌ Not started |
+| `ai/hotspot_detector.py` | ✅ Full DBSCAN-lite implementation |
+| `Hotspot` NamedTuple | ✅ 9 fields: centre, IDs, count, category, radius, critical/high counts, avg score |
+| `_is_valid_coord()` | ✅ Validates finite, range-checked lat/lon |
+| `get_hotspot_detector()` singleton | ✅ |
+| `routes/admin.py` → `GET /admin/hotspots` | ✅ Read-only, no DB writes |
+| `templates/admin/hotspots.html` | ✅ Leaflet 1.9 map + summary table + empty state |
+| `templates/base.html` nav link | ✅ 🗺 Hotspots added |
+| Tests (`TestHotspotDetector` + `TestHotspotRoute`) | ✅ 30 new tests |
 
-**Planned approach:** DBSCAN-lite spatial clustering using Haversine distance (no scikit-learn). Cluster radius: `AI_HOTSPOT_RADIUS_KM = 0.5 km`. Minimum complaints per hotspot: `AI_HOTSPOT_MIN_COMPLAINTS = 3`. Admin map page using Leaflet.js with cluster markers.
+**Algorithm:** DBSCAN-lite radius expansion using Haversine distance.
+- Pre-computes all pairwise neighbourhoods (points within `radius_km`).
+- Core-point expansion: any point with ≥ `min_complaints` neighbours seeds a cluster.
+- Border-point assignment: reachable points absorbed even if they cannot seed independently.
+- No cross-cluster membership: visited flag prevents duplicate assignment.
+- Outputs sorted by cluster size descending.
+
+**Priority statistics per hotspot:**
+- `critical_count` — members with `priority_level == 'Critical'`
+- `high_count` — members with `priority_level == 'High'`
+- `avg_priority_score` — arithmetic mean of `priority_score` values
+
+**Security:** popup content escaped via Jinja2 `|e` filter; map JSON serialised via `tojson` filter (no manual string construction of user data in JS).
 
 ---
 
@@ -173,26 +188,7 @@ Phase 7  ❌  Not started
 
 ## Remaining Tasks
 
-### Immediate Next Steps (Phase 3D – Hotspot Detector)
-
-1. **Implement `ai/hotspot_detector.py`:**
-   - DBSCAN-lite spatial clustering using Haversine distance
-   - Input: list of complaints with `latitude`, `longitude`, `complaint_id`, `category`
-   - Output: list of `Hotspot(center_lat, center_lon, complaint_ids, radius_km, dominant_category)`
-   - Only complaints with coordinates are clustered
-   - Configurable via `AI_HOTSPOT_RADIUS_KM` and `AI_HOTSPOT_MIN_COMPLAINTS`
-
-2. **Add hotspot admin page/map:**
-   - New route `GET /admin/hotspots` 
-   - Template `templates/admin/hotspots.html` with Leaflet.js map
-   - Cluster markers with complaint count and dominant category
-   - Link from admin dashboard navigation
-
-3. **Integrate into `ai_engine.py`** (optional batch step, not per-complaint)
-
-4. **Write tests** in `tests/test_ai.py` — `TestHotspotDetector` class
-
-### Following Steps (Phase 3E – Action Briefs)
+### Immediate Next Steps (Phase 3E – Action Briefs)
 
 5. **Implement `ai/action_brief.py`:**
    - `generate_brief(complaint)` → structured dict with steps list
@@ -216,18 +212,17 @@ Phase 7  ❌  Not started
 
 ---
 
-## Modified Files (Phase 3B → 3C changes)
+## Modified Files (Phase 3D changes)
 
-Files modified during the current session (most recent to oldest):
+Files modified/created during Phase 3D (most recent to oldest):
 
 | File | Changes |
 |------|---------|
-| `tests/test_ai.py` | Added `TestPriorityEngine` class (28 new tests); now 117 tests total |
-| `ai/priority_engine.py` | **Full implementation** — replaced stub with rule-based scoring engine |
-| `database.py` | `save_ai_results()` updated to also persist `priority_score`, `priority_level`, `priority_reason` |
-| `routes/submit.py` | `_run_ai_pipeline()` passes priority fields to `save_ai_results()` |
-| `ai/ai_engine.py` | Added Step 3 (priority scoring); `_load_models()` loads `PriorityEngine`; result dict includes 3 new keys |
-| `ai/duplicate_detector.py` | Fixed `_blend()` (skip zero-weight signals); added `_overlap_coefficient()`; `_text_pair_similarity()` now returns `max(tfidf, overlap)` |
+| `tests/test_ai.py` | Added `TestHotspotDetector` (25 tests) + `TestHotspotRoute` (5 tests); now 147 tests total |
+| `templates/admin/hotspots.html` | **New file** — Leaflet 1.9 map, hotspot summary table, empty state |
+| `templates/base.html` | Added 🗺 Hotspots nav link; refined active-state logic for admin/hotspots |
+| `routes/admin.py` | Added `_get_geo_complaints()` helper + `GET /admin/hotspots` route; dict-conversion for `tojson` |
+| `ai/hotspot_detector.py` | **Full implementation** — replaced stub with DBSCAN-lite, `Hotspot` NamedTuple, `_is_valid_coord()`, priority stats, `get_hotspot_detector()` singleton |
 
 ---
 
@@ -301,9 +296,9 @@ civicai/
 ```
 tests/test_database.py    13 tests   ✅ all passing
 tests/test_routes.py      41 tests   ✅ all passing  (incl. 9 priority filter tests)
-tests/test_ai.py          63 tests   ✅ all passing
+tests/test_ai.py          93 tests   ✅ all passing
                         ─────────
-TOTAL                    117 tests   ✅ 117 / 117 passed
+TOTAL                    147 tests   ✅ 147 / 147 passed
                                      6 subtests passed
 ```
 
@@ -329,6 +324,8 @@ TOTAL                    117 tests   ✅ 117 / 117 passed
 | `TestAIEngine` | 5 | Orchestrator keys, category, duplicates, failure |
 | `TestAIIntegration` | 7 | End-to-end via HTTP: AI results in DB |
 | `TestPriorityEngine` | 28 | Score, level, factors, clamping, AI engine integration |
+| `TestHotspotDetector` | 25 | DBSCAN clustering, coord validation, priority stats, Haversine |
+| `TestHotspotRoute` | 5 | HTTP 200, page content, nav link, dashboard regression |
 
 ---
 

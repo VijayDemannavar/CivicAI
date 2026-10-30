@@ -4,12 +4,14 @@ routes/admin.py – CivicAI Admin Dashboard Blueprint
 Routes:
   GET /admin                               → dashboard with stats + complaint table
   GET /admin/complaint/<complaint_id>      → complaint detail page
+  GET /admin/hotspots                      → geographic hotspot map (Phase 3D)
 """
 
 import logging
 import sqlite3
 
 from flask import Blueprint, render_template, request, abort
+from ai.hotspot_detector import get_hotspot_detector
 
 import database as db
 from config import COMPLAINT_CATEGORIES, COMPLAINT_STATUSES, PRIORITY_LEVELS
@@ -147,4 +149,60 @@ def complaint_detail(complaint_id: str):
         status_history=status_history,
         action_notes=action_notes,
         duplicate_links=duplicate_links,
+    )
+
+
+# ── Hotspot map ───────────────────────────────────────────────────────────────
+
+def _get_geo_complaints() -> list:
+    """
+    Return all complaints that have non-NULL latitude and longitude,
+    along with the columns needed for hotspot detection and display.
+    Read-only — never modifies any complaint record.
+    """
+    with db.db_cursor() as (conn, cur):
+        cur.execute(
+            """SELECT complaint_id, title, category, address,
+                      latitude, longitude, priority_level, priority_score
+               FROM complaints
+               WHERE latitude IS NOT NULL
+                 AND longitude IS NOT NULL
+               ORDER BY created_at DESC;"""
+        )
+        return cur.fetchall()
+
+
+@admin_bp.route("/hotspots")
+def hotspots():
+    """
+    Admin hotspot map.
+    Runs the HotspotDetector over all geo-located complaints and renders
+    a Leaflet map with cluster markers.  Read-only — no DB writes.
+    """
+    geo_complaints = _get_geo_complaints()
+    detector       = get_hotspot_detector()
+    hotspot_list   = detector.detect([dict(c) for c in geo_complaints])
+
+    # Convert NamedTuples to plain dicts so Jinja2 tojson serialises them
+    # as JSON objects (not arrays), making the client-side code simple.
+    hotspots_data = [
+        {
+            "center_lat":         h.center_lat,
+            "center_lon":         h.center_lon,
+            "complaint_ids":      h.complaint_ids,
+            "count":              h.count,
+            "dominant_category":  h.dominant_category,
+            "radius_km":          h.radius_km,
+            "critical_count":     h.critical_count,
+            "high_count":         h.high_count,
+            "avg_priority_score": h.avg_priority_score,
+        }
+        for h in hotspot_list
+    ]
+
+    return render_template(
+        "admin/hotspots.html",
+        hotspots=hotspot_list,          # NamedTuples for Jinja2 template iteration
+        hotspots_json=hotspots_data,    # plain dicts for tojson → Leaflet JS
+        total_geo=len(geo_complaints),
     )

@@ -880,5 +880,326 @@ class TestPriorityEngine(unittest.TestCase):
         self.assertEqual(result["priority_level"], "Low")
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 6. HOTSPOT DETECTOR TESTS
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestHotspotDetector(unittest.TestCase):
+    """
+    Tests for ai/hotspot_detector.py (Phase 3D).
+    All tests are pure-Python — no DB, no HTTP, no network.
+
+    Lotus Colony seed cluster used as the primary fixture:
+        CMP-0019  (12.9672, 77.5932)  Drainage
+        CMP-0020  (12.9670, 77.5930)  Road Damage
+        CMP-0021  (12.9671, 77.5931)  Public Safety
+        CMP-0022  (12.9672, 77.5932)  Waterlogging
+        CMP-0039  (12.9673, 77.5933)  Drainage
+    All five are within ~50 m of each other → well inside 0.5 km.
+    """
+
+    # ── Fixtures ──────────────────────────────────────────────────────────────
+
+    LOTUS_CLUSTER = [
+        {"complaint_id": "LC-001", "latitude": 12.9672, "longitude": 77.5932,
+         "category": "Drainage",      "priority_level": "High",     "priority_score": 52.0},
+        {"complaint_id": "LC-002", "latitude": 12.9670, "longitude": 77.5930,
+         "category": "Road Damage",   "priority_level": "Medium",   "priority_score": 30.0},
+        {"complaint_id": "LC-003", "latitude": 12.9671, "longitude": 77.5931,
+         "category": "Public Safety", "priority_level": "Critical",  "priority_score": 80.0},
+        {"complaint_id": "LC-004", "latitude": 12.9672, "longitude": 77.5932,
+         "category": "Waterlogging",  "priority_level": "High",     "priority_score": 45.0},
+        {"complaint_id": "LC-005", "latitude": 12.9673, "longitude": 77.5933,
+         "category": "Drainage",      "priority_level": "High",     "priority_score": 48.0},
+    ]
+
+    # Two points ~55 km apart from the Lotus cluster — used for
+    # the "two separate clusters" and "no cross-contamination" tests.
+    NORTH_CLUSTER = [
+        {"complaint_id": "NC-001", "latitude": 13.4620, "longitude": 77.5932,
+         "category": "Garbage Overflow", "priority_level": "Medium", "priority_score": 20.0},
+        {"complaint_id": "NC-002", "latitude": 13.4622, "longitude": 77.5933,
+         "category": "Garbage Overflow", "priority_level": "Medium", "priority_score": 22.0},
+        {"complaint_id": "NC-003", "latitude": 13.4621, "longitude": 77.5931,
+         "category": "Streetlight",      "priority_level": "Low",    "priority_score": 15.0},
+    ]
+
+    @classmethod
+    def setUpClass(cls):
+        from ai.hotspot_detector import HotspotDetector
+        cls.det = HotspotDetector(radius_km=0.5, min_complaints=3)
+
+    # ── Return type ───────────────────────────────────────────────────────────
+
+    def test_returns_list(self):
+        """detect() must always return a list."""
+        result = self.det.detect([])
+        self.assertIsInstance(result, list)
+
+    def test_empty_input_returns_empty(self):
+        """Empty complaint list → empty hotspot list."""
+        self.assertEqual(self.det.detect([]), [])
+
+    # ── Coordinate filtering ──────────────────────────────────────────────────
+
+    def test_missing_lat_lon_skipped(self):
+        """Complaints without lat/lon must not form a hotspot."""
+        no_coords = [
+            {"complaint_id": f"X-{i}", "latitude": None, "longitude": None,
+             "category": "Other", "priority_level": "Low", "priority_score": 10.0}
+            for i in range(5)
+        ]
+        self.assertEqual(self.det.detect(no_coords), [])
+
+    def test_invalid_coords_skipped(self):
+        """Non-finite, out-of-range, and string coordinates must be filtered out."""
+        from ai.hotspot_detector import _is_valid_coord
+        import math
+        # None
+        self.assertFalse(_is_valid_coord(None, None))
+        # Non-numeric
+        self.assertFalse(_is_valid_coord("12.97", "77.59"))
+        # NaN
+        self.assertFalse(_is_valid_coord(float("nan"), 77.59))
+        # Infinity
+        self.assertFalse(_is_valid_coord(float("inf"), 77.59))
+        # Latitude out of range
+        self.assertFalse(_is_valid_coord(91.0, 77.59))
+        self.assertFalse(_is_valid_coord(-91.0, 77.59))
+        # Longitude out of range
+        self.assertFalse(_is_valid_coord(12.97, 181.0))
+        self.assertFalse(_is_valid_coord(12.97, -181.0))
+        # Valid boundary values
+        self.assertTrue(_is_valid_coord(90.0, 180.0))
+        self.assertTrue(_is_valid_coord(-90.0, -180.0))
+        self.assertTrue(_is_valid_coord(0.0, 0.0))
+
+    def test_mixed_valid_invalid_coords(self):
+        """Only valid-coord rows contribute; if valid count < min_complaints → []."""
+        mixed = [
+            {"complaint_id": "V-001", "latitude": 12.9672, "longitude": 77.5932,
+             "category": "Drainage", "priority_level": "High", "priority_score": 50.0},
+            {"complaint_id": "V-002", "latitude": None,   "longitude": None,
+             "category": "Drainage", "priority_level": "High", "priority_score": 50.0},
+            {"complaint_id": "V-003", "latitude": 999.0,  "longitude": 77.5932,
+             "category": "Drainage", "priority_level": "High", "priority_score": 50.0},
+        ]
+        # Only 1 valid row → below min_complaints threshold
+        self.assertEqual(self.det.detect(mixed), [])
+
+    # ── Minimum threshold ─────────────────────────────────────────────────────
+
+    def test_below_min_threshold_no_hotspot(self):
+        """2 nearby complaints must not form a hotspot (min = 3)."""
+        two = self.LOTUS_CLUSTER[:2]
+        result = self.det.detect(two)
+        self.assertEqual(result, [], "2 complaints must not form a hotspot")
+
+    def test_exactly_min_threshold_forms_hotspot(self):
+        """Exactly 3 complaints within radius must form 1 hotspot."""
+        three = self.LOTUS_CLUSTER[:3]
+        result = self.det.detect(three)
+        self.assertEqual(len(result), 1, "3 complaints within radius must form exactly 1 hotspot")
+
+    # ── Cluster detection ─────────────────────────────────────────────────────
+
+    def test_lotus_cluster_detected(self):
+        """The 5-point Lotus Colony fixture must produce exactly 1 hotspot."""
+        result = self.det.detect(self.LOTUS_CLUSTER)
+        self.assertEqual(len(result), 1,
+                         f"Expected 1 hotspot, got {len(result)}")
+
+    def test_cluster_count_correct(self):
+        """Detected hotspot must contain all 5 Lotus Colony complaints."""
+        result = self.det.detect(self.LOTUS_CLUSTER)
+        self.assertEqual(result[0].count, 5)
+
+    def test_cluster_complaint_ids_complete(self):
+        """Hotspot must reference exactly the 5 Lotus Colony IDs."""
+        result = self.det.detect(self.LOTUS_CLUSTER)
+        self.assertEqual(sorted(result[0].complaint_ids),
+                         sorted(c["complaint_id"] for c in self.LOTUS_CLUSTER))
+
+    def test_cluster_centre_near_mean(self):
+        """Hotspot centre must be within ±0.001° of the arithmetic mean of member coords."""
+        result = self.det.detect(self.LOTUS_CLUSTER)
+        h = result[0]
+        expected_lat = sum(c["latitude"]  for c in self.LOTUS_CLUSTER) / len(self.LOTUS_CLUSTER)
+        expected_lon = sum(c["longitude"] for c in self.LOTUS_CLUSTER) / len(self.LOTUS_CLUSTER)
+        self.assertAlmostEqual(h.center_lat, expected_lat, delta=0.001)
+        self.assertAlmostEqual(h.center_lon, expected_lon, delta=0.001)
+
+    def test_dominant_category_correct(self):
+        """Dominant category must be 'Drainage' (appears 2× in LOTUS_CLUSTER)."""
+        result = self.det.detect(self.LOTUS_CLUSTER)
+        self.assertEqual(result[0].dominant_category, "Drainage")
+
+    # ── Two separate clusters ─────────────────────────────────────────────────
+
+    def test_two_separate_clusters(self):
+        """Two geographically distant groups must produce two distinct hotspots."""
+        combined = self.LOTUS_CLUSTER + self.NORTH_CLUSTER
+        result = self.det.detect(combined)
+        self.assertEqual(len(result), 2,
+                         f"Expected 2 hotspots, got {len(result)}")
+
+    def test_no_overlap_between_clusters(self):
+        """No complaint ID may appear in more than one hotspot."""
+        combined = self.LOTUS_CLUSTER + self.NORTH_CLUSTER
+        result = self.det.detect(combined)
+        all_ids = [cid for h in result for cid in h.complaint_ids]
+        self.assertEqual(len(all_ids), len(set(all_ids)),
+                         "Duplicate complaint IDs found across hotspots")
+
+    # ── Haversine distance ────────────────────────────────────────────────────
+
+    def test_haversine_same_point_is_zero(self):
+        """Distance from a point to itself must be 0.0 km."""
+        from ai.hotspot_detector import haversine_km
+        self.assertAlmostEqual(haversine_km(12.9716, 77.5946, 12.9716, 77.5946),
+                               0.0, places=6)
+
+    def test_haversine_known_distance(self):
+        """1 degree of longitude at the equator ≈ 111.19 km."""
+        from ai.hotspot_detector import haversine_km
+        d = haversine_km(0.0, 0.0, 0.0, 1.0)
+        self.assertAlmostEqual(d, 111.195, delta=0.1)
+
+    def test_haversine_lotus_cluster_is_small(self):
+        """All Lotus Colony pairs should be < 0.1 km apart."""
+        from ai.hotspot_detector import haversine_km
+        pts = self.LOTUS_CLUSTER
+        for i in range(len(pts)):
+            for j in range(i + 1, len(pts)):
+                d = haversine_km(pts[i]["latitude"], pts[i]["longitude"],
+                                 pts[j]["latitude"], pts[j]["longitude"])
+                self.assertLess(d, 0.1,
+                                f"Distance between {pts[i]['complaint_id']} and "
+                                f"{pts[j]['complaint_id']} = {d:.4f} km (expected < 0.1)")
+
+    # ── Custom radius ─────────────────────────────────────────────────────────
+
+    def test_custom_tight_radius_no_hotspot(self):
+        """With radius_km=0.001 (1 m), the Lotus cluster must not form a hotspot."""
+        from ai.hotspot_detector import HotspotDetector
+        tight = HotspotDetector(radius_km=0.001, min_complaints=3)
+        result = tight.detect(self.LOTUS_CLUSTER)
+        self.assertEqual(result, [],
+                         "Radius of 1 m should prevent cluster formation")
+
+    # ── Priority statistics ───────────────────────────────────────────────────
+
+    def test_critical_count(self):
+        """critical_count must equal the number of Critical-level members."""
+        result = self.det.detect(self.LOTUS_CLUSTER)
+        h = result[0]
+        expected = sum(1 for c in self.LOTUS_CLUSTER
+                       if c["priority_level"] == "Critical")
+        self.assertEqual(h.critical_count, expected)
+
+    def test_high_count(self):
+        """high_count must equal the number of High-level members."""
+        result = self.det.detect(self.LOTUS_CLUSTER)
+        h = result[0]
+        expected = sum(1 for c in self.LOTUS_CLUSTER
+                       if c["priority_level"] == "High")
+        self.assertEqual(h.high_count, expected)
+
+    def test_avg_priority_score(self):
+        """avg_priority_score must equal the arithmetic mean of member scores."""
+        result = self.det.detect(self.LOTUS_CLUSTER)
+        h = result[0]
+        expected = sum(c["priority_score"] for c in self.LOTUS_CLUSTER) / len(self.LOTUS_CLUSTER)
+        self.assertAlmostEqual(h.avg_priority_score, expected, delta=0.05)
+
+    def test_priority_stats_missing_fields(self):
+        """If priority_level / priority_score are absent, no exception is raised."""
+        bare = [
+            {"complaint_id": f"B-{i}", "latitude": 12.9672 + i * 0.0001,
+             "longitude": 77.5932, "category": "Other"}
+            for i in range(3)
+        ]
+        try:
+            result = self.det.detect(bare)
+        except Exception as exc:
+            self.fail(f"detect() raised {exc} when priority fields are missing")
+        # avg_priority_score should default to 0.0 when scores absent
+        if result:
+            self.assertEqual(result[0].avg_priority_score, 0.0)
+
+    # ── Result is NamedTuple ──────────────────────────────────────────────────
+
+    def test_result_is_hotspot_namedtuple(self):
+        """Each item in the returned list must be a Hotspot NamedTuple."""
+        from ai.hotspot_detector import Hotspot
+        result = self.det.detect(self.LOTUS_CLUSTER)
+        self.assertIsInstance(result[0], Hotspot)
+
+    def test_hotspot_has_all_fields(self):
+        """Hotspot must expose all required fields."""
+        result = self.det.detect(self.LOTUS_CLUSTER)
+        h = result[0]
+        for field in ("center_lat", "center_lon", "complaint_ids", "count",
+                      "dominant_category", "radius_km",
+                      "critical_count", "high_count", "avg_priority_score"):
+            self.assertTrue(hasattr(h, field), f"Missing field: {field}")
+
+    # ── Sorted output ─────────────────────────────────────────────────────────
+
+    def test_results_sorted_by_count_descending(self):
+        """Hotspots must be returned in descending order of complaint count."""
+        combined = self.LOTUS_CLUSTER + self.NORTH_CLUSTER
+        result = self.det.detect(combined)
+        counts = [h.count for h in result]
+        self.assertEqual(counts, sorted(counts, reverse=True))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 7. HOTSPOT ROUTE TESTS
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestHotspotRoute(unittest.TestCase):
+    """
+    HTTP-level tests for GET /admin/hotspots (Phase 3D).
+    Uses the Flask test client with a temp database.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.client, cls.app = _make_client()
+
+    def test_hotspots_route_returns_200(self):
+        """GET /admin/hotspots must return HTTP 200."""
+        resp = self.client.get("/admin/hotspots")
+        self.assertEqual(resp.status_code, 200,
+                         f"Expected 200, got {resp.status_code}")
+
+    def test_hotspots_page_title_present(self):
+        """Response must contain the page heading text."""
+        resp = self.client.get("/admin/hotspots")
+        self.assertIn(b"Hotspot Map", resp.data)
+
+    def test_hotspots_page_has_leaflet_or_empty_state(self):
+        """Response must contain either leaflet (map) or empty-state text."""
+        resp = self.client.get("/admin/hotspots")
+        has_map    = b"leaflet" in resp.data.lower()
+        has_empty  = b"No hotspots detected" in resp.data
+        self.assertTrue(has_map or has_empty,
+                        "Page must contain either Leaflet map or empty-state message")
+
+    def test_hotspots_nav_link_in_all_admin_pages(self):
+        """Every admin page must render the Hotspots nav link."""
+        for url in ("/admin/", "/admin/hotspots"):
+            resp = self.client.get(url)
+            self.assertIn(b"Hotspots", resp.data,
+                          f"Hotspots nav link missing from {url}")
+
+    def test_existing_dashboard_still_works(self):
+        """The existing admin dashboard must still return 200 after Phase 3D changes."""
+        resp = self.client.get("/admin/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn(b"Admin Dashboard", resp.data)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
